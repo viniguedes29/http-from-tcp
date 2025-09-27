@@ -1,49 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"net"
+
+	"github.com/taham8875/http-from-tcp/internal/request"
 )
-
-func getLinesChannel(f io.ReadCloser) <-chan string {
-	ch := make(chan string)
-
-	go func() {
-		defer close(ch)
-		defer f.Close()
-
-		currentLine := ""
-
-		for {
-			buffer := make([]byte, 8)
-			n, err := f.Read(buffer)
-
-			if err != nil {
-				break
-			}
-
-			buffer = buffer[:n]
-
-			if i := bytes.IndexByte(buffer, '\n'); i != -1 {
-				currentLine += string(buffer[:i])
-				buffer = buffer[i+1:]
-				ch <- currentLine
-				currentLine = ""
-			}
-
-			currentLine += string(buffer)
-
-		}
-
-		if currentLine != "" {
-			ch <- currentLine
-		}
-	}()
-
-	return ch
-}
 
 func main() {
 	listener, err := net.Listen("tcp", ":42069")
@@ -63,10 +25,17 @@ func main() {
 			continue
 		}
 
-		fmt.Printf("Accepted connection from %v\n", conn.RemoteAddr())
+		r, err := request.RequestFromReader(conn)
 
-		for line := range getLinesChannel(conn) {
-			fmt.Println(line)
+		if err != nil {
+			fmt.Printf("Error reading request: %v\n", err)
+			conn.Close()
+			continue
 		}
+
+		fmt.Printf("Request line:\n")
+		fmt.Printf("- Method: %s\n", r.RequestLine.Method)
+		fmt.Printf("- Target: %s\n", r.RequestLine.RequestTarget)
+		fmt.Printf("- Version: %s\n", r.RequestLine.HttpVersion)
 	}
 }

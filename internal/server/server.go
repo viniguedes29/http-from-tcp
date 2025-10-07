@@ -1,9 +1,7 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"net"
 	"sync/atomic"
 
@@ -11,7 +9,7 @@ import (
 	"github.com/taham8875/http-from-tcp/internal/response"
 )
 
-type Handler func(w io.Writer, req *request.Request) *HandlerError
+type Handler func(w *response.Writer, req *request.Request)
 
 type HandlerError struct {
 	Code    response.StatusCode
@@ -67,62 +65,36 @@ func (s *Server) Close() error {
 	return nil
 }
 
-func writeHandlerError(w io.Writer, handlerError *HandlerError) error {
-	if handlerError == nil {
-		return nil
-	}
-
-	if err := response.WriteStatusLine(w, handlerError.Code); err != nil {
-		return err
-	}
-
-	body := []byte(handlerError.Message)
-
-	headers := response.GetDefaultHeaders(len(body))
-
-	if err := response.WriteHeaders(w, headers); err != nil {
-		return err
-	}
-
-	if _, err := w.Write(body); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
 
 	req, err := request.RequestFromReader(conn)
 
 	if err != nil {
-		_ = writeHandlerError(conn, &HandlerError{
-			Code:    response.StatusBadRequest,
-			Message: "Bad Request\n",
-		})
+		w := response.NewWriter(conn)
+		w.WriteStatusLine(response.StatusBadRequest)
+
+		errorBody := []byte(`<html>
+  <head>
+    <title>400 Bad Request</title>
+  </head>
+  <body>
+    <h1>Bad Request</h1>
+    <p>Your request honestly kinda sucked.</p>
+  </body>
+</html>`)
+
+		headers := response.GetDefaultHeaders(0)
+		headers.SetOverride("Content-Type", "text/html")
+		headers.SetOverride("Content-Length", fmt.Sprintf("%d", len(errorBody)))
+		w.WriteHeaders(headers)
+
+		w.WriteBody(errorBody)
+		return
 	}
-
-	// prepare buffer for handler body
-
-	var buf bytes.Buffer
 
 	if s.handler != nil {
-		if handlerError := s.handler(&buf, req); handlerError != nil {
-			_ = writeHandlerError(conn, handlerError)
-			return
-		}
+		w := response.NewWriter(conn)
+		s.handler(w, req)
 	}
-
-	if err := response.WriteStatusLine(conn, response.StatusOK); err != nil {
-		return
-	}
-
-	h := response.GetDefaultHeaders(buf.Len())
-	if err := response.WriteHeaders(conn, h); err != nil {
-		return
-	}
-
-	_, _ = io.Copy(conn, &buf)
-
 }

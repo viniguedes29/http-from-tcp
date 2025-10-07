@@ -1,13 +1,13 @@
 package main
 
 import (
-	"bytes"
-	"io"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/taham8875/http-from-tcp/internal/headers"
 	"github.com/taham8875/http-from-tcp/internal/request"
 	"github.com/taham8875/http-from-tcp/internal/response"
 	"github.com/taham8875/http-from-tcp/internal/server"
@@ -16,21 +16,65 @@ import (
 const port = 42069
 
 func main() {
-	handler := func(w io.Writer, req *request.Request) *server.HandlerError {
+	handler := func(w *response.Writer, req *request.Request) {
 		switch req.RequestLine.RequestTarget {
 		case "/yourproblem":
-			return &server.HandlerError{
-				Code:    response.StatusBadRequest,
-				Message: "Your problem is not my problem\n",
-			}
+			w.WriteStatusLine(response.StatusBadRequest)
+			body := []byte(`<html>
+  <head>
+    <title>400 Bad Request</title>
+  </head>
+  <body>
+    <h1>Bad Request</h1>
+    <p>Your request honestly kinda sucked.</p>
+  </body>
+</html>`)
+			headers := headers.NewHeaders()
+			headers.SetOverride("Content-Type", "text/html")
+			headers.SetOverride("Content-Length", fmt.Sprintf("%d", len(body)))
+			headers.SetOverride("Connection", "close")
+
+			w.WriteHeaders(headers)
+			w.WriteBody(body)
 		case "/myproblem":
-			return &server.HandlerError{
-				Code:    response.StatusInternalServerError,
-				Message: "Woopsie, my bad\n",
-			}
+			w.WriteStatusLine(response.StatusInternalServerError)
+
+			body := []byte(`<html>
+  <head>
+    <title>500 Internal Server Error</title>
+  </head>
+  <body>
+    <h1>Internal Server Error</h1>
+    <p>Okay, you know what? This one is on me.</p>
+  </body>
+</html>`)
+			headers := headers.NewHeaders()
+			headers.SetOverride("Content-Type", "text/html")
+			headers.SetOverride("Content-Length", fmt.Sprintf("%d", len(body)))
+			headers.SetOverride("Connection", "close")
+
+			w.WriteHeaders(headers)
+			w.WriteBody(body)
 		default:
-			_, _ = io.Copy(w, bytes.NewBufferString("All good, frfr\n"))
-			return nil
+			w.WriteStatusLine(response.StatusOK)
+
+			body := []byte(`<html>
+  <head>
+    <title>200 OK</title>
+  </head>
+  <body>
+    <h1>Success!</h1>
+    <p>Your request was an absolute banger.</p>
+  </body>
+</html>`)
+
+			headers := headers.NewHeaders()
+			headers.SetOverride("Content-Type", "text/html")
+			headers.SetOverride("Content-Length", fmt.Sprintf("%d", len(body)))
+			headers.SetOverride("Connection", "close")
+
+			w.WriteHeaders(headers)
+			w.WriteBody(body)
 		}
 	}
 

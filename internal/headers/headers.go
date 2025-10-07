@@ -58,6 +58,17 @@ func (h Headers) Set(key, value string) error {
 	return nil
 }
 
+func (h Headers) SetOverride(key, value string) error {
+	if !isValidHeaderName(key) {
+		return ERROR_INVALID_HEADER_FORMAT
+	}
+
+	name := strings.ToLower(key)
+	h[name] = value
+
+	return nil
+}
+
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	// check for rn
 	rnIndex := bytes.Index(data, []byte(rn))

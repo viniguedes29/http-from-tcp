@@ -152,3 +152,34 @@ func (w *Writer) WriteChunkedBodyEnd() (int, error) {
 	w.state = StateBody
 	return 0, nil
 }
+
+func (w *Writer) WriteTrailers(h headers.Headers) error {
+	if w.state != StateChunkedBody {
+		return fmt.Errorf("invalid state: expected StateChunkedBody, got %d", w.state)
+	}
+
+	// write the final chunk
+	_, err := io.WriteString(w.conn, "0\r\n")
+	if err != nil {
+		return err
+	}
+
+	// write trailers
+	b := []byte{}
+
+	for key, value := range h {
+		b = fmt.Appendf(b, "%s: %s\r\n", key, value)
+	}
+
+	// end it with an extra \r\n
+	b = append(b, []byte("\r\n")...)
+	_, err = w.conn.Write(b)
+	if err != nil {
+		return err
+	}
+
+	// trailers are part of the body btw
+	w.state = StateBody
+
+	return nil
+}

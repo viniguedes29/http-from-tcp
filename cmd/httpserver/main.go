@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"net/http"
@@ -137,23 +138,24 @@ func handleHTTPBinProxy(w *response.Writer, req *request.Request) {
 
 	w.WriteStatusLine(response.StatusOK)
 
-	headers := headers.NewHeaders()
-	headers.SetOverride("Content-Type", resp.Header.Get("Content-Type"))
-	headers.SetOverride("Transfer-Encoding", "chunked")
-	headers.SetOverride("Connection", "close")
+	newHeaders := headers.NewHeaders()
+	newHeaders.SetOverride("Content-Type", resp.Header.Get("Content-Type"))
+	newHeaders.SetOverride("Transfer-Encoding", "chunked")
+	newHeaders.SetOverride("Connection", "close")
 
 	// remove the content-length header if it exists as we use chunked encoding
-	headers.Delete("Content-Length")
+	newHeaders.Delete("Content-Length")
 
-	w.WriteHeaders(headers)
+	w.WriteHeaders(newHeaders)
 
+	var fullBody []byte
 	buffer := make([]byte, 32)
-	fmt.Sprintln("Starting to stream response from httpbin")
 
 	for {
 		n, err := resp.Body.Read(buffer)
-		fmt.Sprintln("Read", n, "bytes from httpbin")
 		if n > 0 {
+			// store the chunked data for hash calculation
+			fullBody = append(fullBody, buffer[:n]...)
 			_, writeErr := w.WriteChunkedBody(buffer[:n])
 			if writeErr != nil {
 				log.Println("Error writing chunked body:", writeErr)
@@ -165,7 +167,13 @@ func handleHTTPBinProxy(w *response.Writer, req *request.Request) {
 		}
 	}
 
-	// write the last chunk
-	w.WriteChunkedBodyEnd()
+	// calculate sha256 hash of the response body
+	hash := sha256.Sum256(fullBody)
+	hashHex := fmt.Sprintf("%x", hash)
 
+	trailers := headers.NewHeaders() // trailers are headers btw
+	trailers.SetOverride("X-Content-SHA256", hashHex)
+	trailers.SetOverride("X-Content-Length", fmt.Sprintf("%d", len(fullBody)))
+
+	w.WriteTrailers(trailers)
 }

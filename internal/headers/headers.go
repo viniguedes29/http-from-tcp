@@ -48,7 +48,12 @@ func (h Headers) Set(key, value string) error {
 		return ERROR_INVALID_HEADER_FORMAT
 	}
 
-	h[strings.ToLower(key)] = value
+	name := strings.ToLower(key)
+	if v, ok := h[name]; ok {
+		h[name] = fmt.Sprintf("%s, %s", v, value)
+	} else {
+		h[name] = value
+	}
 
 	return nil
 }

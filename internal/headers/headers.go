@@ -16,6 +16,43 @@ func NewHeaders() Headers {
 	return make(Headers)
 }
 
+func isValidHeaderName(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+
+	for _, char := range name {
+		switch {
+		case char >= 'A' && char <= 'Z': // Uppercase letters
+		case char >= 'a' && char <= 'z': // Lowercase letters
+		case char >= '0' && char <= '9': // Digits
+		case char == '!' || char == '#' || char == '$' || char == '%' || char == '&' || char == '\'':
+		case char == '*' || char == '+' || char == '-' || char == '.' || char == '^':
+		case char == '_' || char == '`' || char == '|' || char == '~':
+		default:
+			return false
+		}
+
+	}
+
+	return true
+}
+
+func (h Headers) Get(key string) (string, bool) {
+	value, ok := h[strings.ToLower(key)]
+	return value, ok
+}
+
+func (h Headers) Set(key, value string) error {
+	if !isValidHeaderName(key) {
+		return ERROR_INVALID_HEADER_FORMAT
+	}
+
+	h[strings.ToLower(key)] = value
+
+	return nil
+}
+
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	// check for rn
 	rnIndex := bytes.Index(data, []byte(rn))
@@ -32,6 +69,9 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 
 	// get the header headerLine without the rn
 	headerLine := data[:rnIndex]
+
+	// allow leading spaces
+	headerLine = bytes.TrimLeft(headerLine, " ")
 
 	// find the colon separator
 	colonIndex := bytes.IndexByte(headerLine, ':')
@@ -55,7 +95,10 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	value := strings.TrimSpace(string(valueBytes))
 
 	// set the header
-	h[key] = value
+	err = h.Set(key, value)
+	if err != nil {
+		return 0, false, err
+	}
 
 	return rnIndex + 2, false, nil // +2 for the rn
 

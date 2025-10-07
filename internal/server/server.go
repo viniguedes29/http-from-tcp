@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"sync/atomic"
+
+	"github.com/taham8875/http-from-tcp/internal/response"
 )
 
 type Server struct {
@@ -54,14 +56,11 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) handle(conn net.Conn) {
-	// TODO: Parse the request properly, we now just send a fixed response.
-	// Always respond with a 200 Hello World!
-	// Content-Length: 13 to include trailing newline.
-	resp := "HTTP/1.1 200 OK\r\n" +
-		"Content-Type: text/plain\r\n" +
-		"Content-Length: 13\r\n" +
-		"\r\n" +
-		"Hello World!\n"
+	defer conn.Close()
 
-	_, _ = conn.Write([]byte(resp))
+	// return the default empty body response
+	_ = response.WriteStatusLine(conn, response.StatusOK)
+	h := response.GetDefaultHeaders(0)
+	_ = response.WriteHeaders(conn, h)
+	_, _ = conn.Write([]byte("\r\n"))
 }

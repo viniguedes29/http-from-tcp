@@ -65,6 +65,37 @@ func main() {
 
 			w.WriteHeaders(headers)
 			w.WriteBody(body)
+		case "/video":
+			video, err := os.ReadFile("assets/vim.mp4")
+			if err != nil {
+				w.WriteStatusLine(response.StatusInternalServerError)
+				errorBody := []byte(`<html>
+  <head>
+    <title>500 Internal Server Error</title>
+  </head>
+  <body>
+    <h1>Internal Server Error</h1>
+    <p>Failed to read video file</p>
+  </body>
+</html>`)
+				newHeaders := headers.NewHeaders()
+				newHeaders.SetOverride("Content-Type", "text/html")
+				newHeaders.SetOverride("Content-Length", fmt.Sprintf("%d", len(errorBody)))
+				newHeaders.SetOverride("Connection", "close")
+				w.WriteHeaders(newHeaders)
+				w.WriteBody(errorBody)
+				return
+			}
+
+			newHeaders := headers.NewHeaders()
+			newHeaders.SetOverride("Content-Type", "video/mp4")
+			newHeaders.SetOverride("Content-Length", fmt.Sprintf("%d", len(video)))
+			newHeaders.SetOverride("Connection", "close")
+
+			w.WriteStatusLine(response.StatusOK)
+			w.WriteHeaders(newHeaders)
+			w.WriteBody(video)
+
 		default:
 			w.WriteStatusLine(response.StatusOK)
 

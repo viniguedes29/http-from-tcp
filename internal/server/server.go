@@ -1,19 +1,30 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"sync/atomic"
 
+	"github.com/taham8875/http-from-tcp/internal/request"
 	"github.com/taham8875/http-from-tcp/internal/response"
 )
+
+type Handler func(w io.Writer, req *request.Request) *HandlerError
+
+type HandlerError struct {
+	Code    response.StatusCode
+	Message string
+}
 
 type Server struct {
 	listener net.Listener
 	closed   atomic.Bool
+	handler  Handler
 }
 
-func Serve(port int) (*Server, error) {
+func Serve(port int, h Handler) (*Server, error) {
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return nil, err
@@ -21,6 +32,7 @@ func Serve(port int) (*Server, error) {
 
 	s := &Server{
 		listener: ln,
+		handler:  h,
 	}
 
 	go s.listen()
@@ -55,12 +67,62 @@ func (s *Server) Close() error {
 	return nil
 }
 
+func writeHandlerError(w io.Writer, handlerError *HandlerError) error {
+	if handlerError == nil {
+		return nil
+	}
+
+	if err := response.WriteStatusLine(w, handlerError.Code); err != nil {
+		return err
+	}
+
+	body := []byte(handlerError.Message)
+
+	headers := response.GetDefaultHeaders(len(body))
+
+	if err := response.WriteHeaders(w, headers); err != nil {
+		return err
+	}
+
+	if _, err := w.Write(body); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
 
-	// return the default empty body response
-	_ = response.WriteStatusLine(conn, response.StatusOK)
-	h := response.GetDefaultHeaders(0)
-	_ = response.WriteHeaders(conn, h)
-	_, _ = conn.Write([]byte("\r\n"))
+	req, err := request.RequestFromReader(conn)
+
+	if err != nil {
+		_ = writeHandlerError(conn, &HandlerError{
+			Code:    response.StatusBadRequest,
+			Message: "Bad Request\n",
+		})
+	}
+
+	// prepare buffer for handler body
+
+	var buf bytes.Buffer
+
+	if s.handler != nil {
+		if handlerError := s.handler(&buf, req); handlerError != nil {
+			_ = writeHandlerError(conn, handlerError)
+			return
+		}
+	}
+
+	if err := response.WriteStatusLine(conn, response.StatusOK); err != nil {
+		return
+	}
+
+	h := response.GetDefaultHeaders(buf.Len())
+	if err := response.WriteHeaders(conn, h); err != nil {
+		return
+	}
+
+	_, _ = io.Copy(conn, &buf)
+
 }

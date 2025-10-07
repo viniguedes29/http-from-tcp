@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/taham8875/http-from-tcp/internal/headers"
@@ -17,6 +19,13 @@ const port = 42069
 
 func main() {
 	handler := func(w *response.Writer, req *request.Request) {
+
+		// handle httpbin proxy requests
+		if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin") {
+			handleHTTPBinProxy(w, req)
+			return
+		}
+
 		switch req.RequestLine.RequestTarget {
 		case "/yourproblem":
 			w.WriteStatusLine(response.StatusBadRequest)
@@ -89,4 +98,74 @@ func main() {
 	signal.Notify(sigChannel, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChannel
 	log.Println("Shutting down server...")
+}
+
+func handleHTTPBinProxy(w *response.Writer, req *request.Request) {
+	// extraxt the path after /httpbin
+	path := strings.TrimPrefix(req.RequestLine.RequestTarget, "/httpbin")
+	if path == "" {
+		path = "/"
+	}
+
+	// construct the base url
+	httpbinURL := "https://httpbin.org" + path
+
+	// Make the request to the httpbin server
+	resp, err := http.Get(httpbinURL)
+	if err != nil {
+		w.WriteStatusLine(response.StatusInternalServerError)
+		errorBody := []byte(`<html>
+  <head>
+    <title>500 Internal Server Error</title>
+  </head>
+  <body>
+    <h1>Internal Server Error</h1>
+    <p>Failed to proxy request to httpbin.org</p>
+  </body>
+</html>`)
+		headers := headers.NewHeaders()
+		headers.SetOverride("Content-Type", "text/plain")
+		headers.SetOverride("Content-Length", fmt.Sprintf("%d", len(errorBody)))
+		headers.SetOverride("Connection", "close")
+
+		w.WriteHeaders(headers)
+		w.WriteBody(errorBody)
+		return
+	}
+
+	defer resp.Body.Close()
+
+	w.WriteStatusLine(response.StatusOK)
+
+	headers := headers.NewHeaders()
+	headers.SetOverride("Content-Type", resp.Header.Get("Content-Type"))
+	headers.SetOverride("Transfer-Encoding", "chunked")
+	headers.SetOverride("Connection", "close")
+
+	// remove the content-length header if it exists as we use chunked encoding
+	headers.Delete("Content-Length")
+
+	w.WriteHeaders(headers)
+
+	buffer := make([]byte, 32)
+	fmt.Sprintln("Starting to stream response from httpbin")
+
+	for {
+		n, err := resp.Body.Read(buffer)
+		fmt.Sprintln("Read", n, "bytes from httpbin")
+		if n > 0 {
+			_, writeErr := w.WriteChunkedBody(buffer[:n])
+			if writeErr != nil {
+				log.Println("Error writing chunked body:", writeErr)
+				break
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	// write the last chunk
+	w.WriteChunkedBodyEnd()
+
 }

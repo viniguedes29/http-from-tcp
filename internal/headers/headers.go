@@ -69,6 +69,11 @@ func (h Headers) SetOverride(key, value string) error {
 	return nil
 }
 
+func (h Headers) Delete(key string) {
+	name := strings.ToLower(key)
+	delete(h, name)
+}
+
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	// check for rn
 	rnIndex := bytes.Index(data, []byte(rn))

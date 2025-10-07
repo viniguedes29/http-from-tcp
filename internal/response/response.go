@@ -22,6 +22,7 @@ const (
 	StateStatusLine
 	StateHeaders
 	StateBody
+	StateChunkedBody
 )
 
 type Writer struct {
@@ -106,4 +107,48 @@ func (w *Writer) WriteBody(body []byte) error {
 	w.state = StateBody
 
 	return nil
+}
+
+func (w *Writer) WriteChunkedBody(p []byte) (n int, err error) {
+	if w.state != StateHeaders && w.state != StateChunkedBody {
+		return 0, fmt.Errorf("invalid state: expected StateHeaders or StateChunkedBody, got %d", w.state)
+	}
+
+	// if this the first chunk, update the state
+	if w.state == StateHeaders {
+		w.state = StateChunkedBody
+	}
+
+	chunkSize := fmt.Sprintf("%x\r\n", len(p))
+
+	_, err = io.WriteString(w.conn, chunkSize)
+	if err != nil {
+		return 0, err
+	}
+
+	n, err = w.conn.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	_, err = io.WriteString(w.conn, "\r\n")
+	if err != nil {
+		return n, err
+	}
+
+	return n, nil
+}
+
+func (w *Writer) WriteChunkedBodyEnd() (int, error) {
+	if w.state != StateChunkedBody {
+		return 0, fmt.Errorf("invalid state: expected StateChunkedBody, got %d", w.state)
+	}
+
+	_, err := io.WriteString(w.conn, "0\r\n\r\n")
+	if err != nil {
+		return 0, err
+	}
+
+	w.state = StateBody
+	return 0, nil
 }

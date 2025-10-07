@@ -5,15 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/taham8875/http-from-tcp/internal/headers"
 )
 
 const (
 	StateInit = iota
+	StateParsingHeaders
 	StateDone
 )
 
 type Request struct {
 	RequestLine RequestLine
+	Headers     headers.Headers
 	State       int
 }
 
@@ -65,6 +69,10 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 		bytesConsumed, err := request.parse(buf[:readToIndex])
 
+		if err != nil {
+			return nil, err
+		}
+
 		if bytesConsumed > 0 {
 			copy(buf, buf[bytesConsumed:])
 			readToIndex -= bytesConsumed
@@ -75,6 +83,26 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 }
 
 func (r *Request) parse(data []byte) (int, error) {
+	totalBytesParsed := 0
+	for r.State != StateDone {
+		n, err := r.parseSingle(data[totalBytesParsed:])
+		if err != nil {
+			return totalBytesParsed, err
+		}
+
+		if n == 0 {
+			// need more data
+			return totalBytesParsed, nil
+		}
+
+		totalBytesParsed += n
+
+	}
+
+	return totalBytesParsed, nil
+}
+
+func (r *Request) parseSingle(data []byte) (int, error) {
 	switch r.State {
 	case StateInit:
 		requestLine, bytesConsumed, err := parseRequestLines(data)
@@ -86,10 +114,31 @@ func (r *Request) parse(data []byte) (int, error) {
 			return 0, nil
 		}
 
-		r.State = StateDone
-
 		r.RequestLine = *requestLine
+		r.State = StateParsingHeaders
+
 		return bytesConsumed, nil
+	case StateParsingHeaders:
+		if r.Headers == nil {
+			r.Headers = headers.NewHeaders()
+		}
+
+		n, done, err := r.Headers.Parse(data)
+		if err != nil {
+			return 0, err
+		}
+
+		if n == 0 {
+			// need more date
+			return 0, nil
+		}
+
+		if done {
+			r.State = StateDone
+		}
+
+		return n, nil
+
 	case StateDone:
 		return 0, ERROR_PARSE_WHEN_DONE
 	default:
@@ -98,18 +147,19 @@ func (r *Request) parse(data []byte) (int, error) {
 }
 
 func parseRequestLines(requestBytes []byte) (*RequestLine, int, error) {
-	lines := bytes.Split(requestBytes, []byte(SEPARATOR))
-	if len(lines) < 1 {
+	rnIdx := bytes.Index(requestBytes, []byte(SEPARATOR))
+	if rnIdx == -1 {
+		// need more data for a full request line
+		return nil, 0, nil
+	}
+
+	line := requestBytes[:rnIdx]
+	parts := bytes.Split(line, []byte(" "))
+	if len(parts) != 3 {
 		return nil, 0, ERROR_MALFORMED_REQUEST
 	}
 
-	requestLineParts := bytes.Split(lines[0], []byte(" "))
-	if len(requestLineParts) != 3 {
-		return nil, 0, ERROR_MALFORMED_REQUEST
-	}
-
-	httpVersion := requestLineParts[2]
-
+	httpVersion := parts[2]
 	if string(httpVersion) != "HTTP/1.1" {
 		return nil, 0, ERROR_UNSUPPORTED_HTTP_VERSION
 	}
@@ -117,8 +167,8 @@ func parseRequestLines(requestBytes []byte) (*RequestLine, int, error) {
 	httpVersion = bytes.TrimPrefix(httpVersion, []byte("HTTP/"))
 
 	return &RequestLine{
-		Method:        string(requestLineParts[0]),
-		RequestTarget: string(requestLineParts[1]),
+		Method:        string(parts[0]),
+		RequestTarget: string(parts[1]),
 		HttpVersion:   string(httpVersion),
-	}, len(lines[0]) + len(SEPARATOR), nil
+	}, rnIdx + len(SEPARATOR), nil
 }

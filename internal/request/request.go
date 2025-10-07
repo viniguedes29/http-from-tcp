@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 
 	"github.com/taham8875/http-from-tcp/internal/headers"
 )
@@ -12,12 +13,14 @@ import (
 const (
 	StateInit = iota
 	StateParsingHeaders
+	StateParsingBody
 	StateDone
 )
 
 type Request struct {
 	RequestLine RequestLine
 	Headers     headers.Headers
+	Body        string
 	State       int
 }
 
@@ -58,6 +61,18 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 		if err != nil {
 			if err == io.EOF {
+				// if we are expecting a body, ensure we got it all
+				if request.State == StateParsingBody {
+					if v, ok := request.Headers.Get("content-length"); ok && len(v) > 0 {
+						if cl, err := strconv.Atoi(v); err == nil && cl >= 0 {
+							if len(request.Body) < cl {
+								return nil, ERROR_MALFORMED_REQUEST
+							}
+						} else {
+							return nil, ERROR_MALFORMED_REQUEST
+						}
+					}
+				}
 				request.State = StateDone
 				break
 			}
@@ -134,10 +149,38 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 		}
 
 		if done {
-			r.State = StateDone
+			r.State = StateParsingBody
 		}
 
 		return n, nil
+
+	case StateParsingBody:
+		contentLengthValue, ok := r.Headers.Get("content-length")
+
+		// if no content-length, assume no body and finish
+		if !ok || len(contentLengthValue) == 0 || contentLengthValue == "0" {
+			r.State = StateDone
+			return 0, nil
+		}
+
+		// convert contentLength to int from contentLengthValue
+		contentLength, err := strconv.Atoi(contentLengthValue)
+		if err != nil || contentLength < 0 {
+			return 0, ERROR_MALFORMED_REQUEST
+		}
+
+		r.Body += string(data)
+
+		if len(r.Body) > contentLength {
+			return len(data), ERROR_MALFORMED_REQUEST
+		}
+
+		if len(r.Body) == contentLength {
+			r.State = StateDone
+			return len(data), nil
+		}
+
+		return len(data), nil
 
 	case StateDone:
 		return 0, ERROR_PARSE_WHEN_DONE
